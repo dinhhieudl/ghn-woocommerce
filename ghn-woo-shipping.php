@@ -21,6 +21,7 @@ define('GHN_PLUGIN_URL', plugin_dir_url(__FILE__));
 // Autoload
 require_once GHN_PLUGIN_DIR . 'includes/class-ghn-api.php';
 require_once GHN_PLUGIN_DIR . 'includes/class-ghn-admin.php';
+require_once GHN_PLUGIN_DIR . 'includes/class-ghn-checkout.php';
 
 final class GHN_Woo_Shipping {
 
@@ -48,6 +49,7 @@ final class GHN_Woo_Shipping {
 
         $this->init_settings();
         new GHN_Admin();
+        new GHN_Checkout();
     }
 
     private function init_settings() {

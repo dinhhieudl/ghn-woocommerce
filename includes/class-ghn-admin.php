@@ -37,12 +37,8 @@ class GHN_Admin {
         // Enqueue assets on order list and order detail pages
         add_action('admin_enqueue_scripts', [$this, 'enqueue_assets']);
 
-        // Checkout: add GHN district/ward fields
-        add_action('woocommerce_after_shipping_address', [$this, 'render_checkout_ghn_fields']);
+        // Checkout: GHN fields handled by GHN_Checkout class
         add_action('woocommerce_checkout_update_order_meta', [$this, 'save_checkout_ghn_data']);
-
-        // Enqueue checkout JS for district/ward selector
-        add_action('wp_enqueue_scripts', [$this, 'enqueue_checkout_assets']);
     }
 
     /* ------------------------------------------------------------------
@@ -444,16 +440,13 @@ class GHN_Admin {
         $state   = $order->get_shipping_state();   // Tỉnh/Thành phố
         $country = $order->get_shipping_country();
 
-        // Try to get district_id and ward_code from order meta (set by checkout custom fields)
+        // Get GHN codes from order meta (set by checkout dropdowns)
         $district_id = $order->get_meta('_ghn_district_id');
         $ward_code   = $order->get_meta('_ghn_ward_code');
 
-        // If not found, try to match from address
-        if (!$district_id || !$ward_code) {
-            // We need district_id and ward_code from GHN
-            // Try matching by city/district name
+        // Fallback: try matching by city name if no meta
+        if (!$district_id) {
             $district_id = $this->match_district($city, $state);
-            $ward_code   = '';
         }
 
         if (empty($name) || empty($phone) || empty($address)) {
@@ -461,7 +454,11 @@ class GHN_Admin {
         }
 
         if (!$district_id) {
-            return ['valid' => false, 'error' => "Không xác định được quận/huyện từ địa chỉ: {$city}, {$state}. Vui lòng điền mã district_id GHN vào đơn."];
+            return ['valid' => false, 'error' => "Không xác định được quận/huyện. Khách cần chọn Tỉnh/Quận/Phường tại checkout hoặc admin set _ghn_district_id."];
+        }
+
+        if (!$ward_code) {
+            return ['valid' => false, 'error' => "Thiếu mã phường/xã. Khách cần chọn Phường/Xã tại checkout hoặc admin set _ghn_ward_code."];
         }
 
         // Build full address string
@@ -578,39 +575,4 @@ class GHN_Admin {
         }
     }
 
-    /* ------------------------------------------------------------------
-     *  Checkout: District / Ward GHN fields
-     * ----------------------------------------------------------------*/
-
-    /**
-     * Render GHN district/ward selectors on checkout.
-     */
-    public function render_checkout_ghn_fields(WC_Order $order = null): void {
-        echo '<div class="ghn-checkout-fields" style="margin-top:12px;">';
-        woocommerce_form_field('ghn_district_id', [
-            'type'     => 'text',
-            'label'    => 'Mã Quận/Huyện GHN',
-            'required' => false,
-            'class'    => ['form-row-wide'],
-            'input_class' => ['input-text'],
-        ], '');
-        woocommerce_form_field('ghn_ward_code', [
-            'type'     => 'text',
-            'label'    => 'Mã Phường/Xã GHN',
-            'required' => false,
-            'class'    => ['form-row-wide'],
-            'input_class' => ['input-text'],
-        ], '');
-        echo '<p class="description">Nếu biết mã GHN, nhập để đảm bảo tạo đơn chính xác. Có thể bỏ qua nếu đã cấu hình đúng địa chỉ shop.</p>';
-        echo '</div>';
-    }
-
-    /**
-     * Enqueue checkout helper script - uses AJAX (token stays server-side).
-     */
-    public function enqueue_checkout_assets(): void {
-        if (!is_checkout()) return;
-        // Future: add district/ward dropdown via AJAX if needed.
-        // For now, admin can manually set _ghn_district_id / _ghn_ward_code on orders.
-    }
 }
