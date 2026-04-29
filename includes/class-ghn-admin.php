@@ -36,9 +36,6 @@ class GHN_Admin {
 
         // Enqueue assets on order list and order detail pages
         add_action('admin_enqueue_scripts', [$this, 'enqueue_assets']);
-
-        // Checkout: GHN fields handled by GHN_Checkout class
-        add_action('woocommerce_checkout_update_order_meta', [$this, 'save_checkout_ghn_data']);
     }
 
     /* ------------------------------------------------------------------
@@ -437,15 +434,19 @@ class GHN_Admin {
         $phone   = $order->get_billing_phone();
         $address = $order->get_shipping_address_1();
         $city    = $order->get_shipping_city();
-        $state   = $order->get_shipping_state();   // Tỉnh/Thành phố
+        $state   = $order->get_shipping_state();
         $country = $order->get_shipping_country();
 
-        // Get GHN codes from order meta (set by checkout dropdowns)
+        /* Get GHN codes from order meta (set by checkout dropdowns) */
         $district_id = $order->get_meta('_ghn_district_id');
         $ward_code   = $order->get_meta('_ghn_ward_code');
 
-        // Fallback: try matching by city name if no meta
-        if (!$district_id) {
+        /* Get human-readable names */
+        $district_name = $order->get_meta('_ghn_district_name');
+        $ward_name     = $order->get_meta('_ghn_ward_name');
+
+        /* Fallback: try matching by city name if no meta */
+        if (!$district_id && $city) {
             $district_id = $this->match_district($city, $state);
         }
 
@@ -461,10 +462,24 @@ class GHN_Admin {
             return ['valid' => false, 'error' => "Thiếu mã phường/xã. Khách cần chọn Phường/Xã tại checkout hoặc admin set _ghn_ward_code."];
         }
 
-        // Build full address string
+        /*
+         * Build full address string.
+         * If the address_1 already contains ward+district info (auto-filled by checkout JS), use as-is.
+         * Otherwise, compose from names.
+         */
         $full_address = $address;
         if ($order->get_shipping_address_2()) {
             $full_address .= ', ' . $order->get_shipping_address_2();
+        }
+
+        /* If address is just a bare street address without ward/district, append them */
+        if ($ward_name && $district_name && $address) {
+            $addr_lower = mb_strtolower($address);
+            $ward_lower = mb_strtolower($ward_name);
+            $dist_lower = mb_strtolower($district_name);
+            if (strpos($addr_lower, $ward_lower) === false && strpos($addr_lower, $dist_lower) === false) {
+                $full_address = $address . ', ' . $ward_name . ', ' . $district_name;
+            }
         }
 
         return [
@@ -561,18 +576,6 @@ class GHN_Admin {
         }
 
         return "<span style='background:#607d8b;color:#fff;padding:2px 8px;border-radius:3px;font-size:11px;'>{$status}</span>";
-    }
-
-    /**
-     * Save custom GHN fields from checkout if provided.
-     */
-    public function save_checkout_ghn_data(int $order_id): void {
-        if (!empty($_POST['ghn_district_id'])) {
-            update_post_meta($order_id, '_ghn_district_id', sanitize_text_field($_POST['ghn_district_id']));
-        }
-        if (!empty($_POST['ghn_ward_code'])) {
-            update_post_meta($order_id, '_ghn_ward_code', sanitize_text_field($_POST['ghn_ward_code']));
-        }
     }
 
 }

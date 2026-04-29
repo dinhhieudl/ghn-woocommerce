@@ -2,6 +2,7 @@
 /**
  * GHN Checkout - Province/District/Ward dropdown selectors
  *
+ * Cascading dropdowns that sync to WooCommerce standard shipping fields.
  * Works with both classic shortcode checkout and block-based checkout.
  */
 
@@ -10,28 +11,27 @@ defined('ABSPATH') || exit;
 class GHN_Checkout {
 
     public function __construct() {
-        // ── Classic checkout (shortcode [woocommerce_checkout]) ──
-        // Hook into woocommerce_checkout_fields — the standard, works with ALL themes
+        /* ── Classic checkout (shortcode [woocommerce_checkout]) ── */
         add_filter('woocommerce_checkout_fields', [$this, 'add_ghn_checkout_fields']);
-
-        // Render the select fields (WooCommerce only renders text inputs from checkout_fields,
-        // so we render selects manually after the shipping fields)
         add_action('woocommerce_after_checkout_shipping_form', [$this, 'render_ghn_selects']);
 
-        // Save to order meta
+        /* ── Save to order meta ── */
         add_action('woocommerce_checkout_update_order_meta', [$this, 'save_ghn_fields']);
         add_action('woocommerce_checkout_create_order', [$this, 'save_ghn_to_order'], 10, 2);
 
-        // Display in admin order detail
+        /* ── Validate: require GHN fields ── */
+        add_action('woocommerce_checkout_process', [$this, 'validate_ghn_fields']);
+
+        /* ── Display in admin order detail ── */
         add_action('woocommerce_admin_order_data_after_shipping_address', [$this, 'display_in_admin']);
 
-        // Enqueue JS on checkout
+        /* ── Enqueue JS on checkout ── */
         add_action('wp_enqueue_scripts', [$this, 'enqueue_scripts']);
 
-        // ── Block-based checkout (WooCommerce Blocks) ──
+        /* ── Block-based checkout (WooCommerce Blocks) ── */
         add_action('woocommerce_blocks_loaded', [$this, 'register_block_checkout_hooks']);
 
-        // ── AJAX endpoints (logged-in + nopriv) ──
+        /* ── AJAX endpoints (logged-in + nopriv) ── */
         add_action('wp_ajax_ghn_get_provinces', [$this, 'ajax_get_provinces']);
         add_action('wp_ajax_nopriv_ghn_get_provinces', [$this, 'ajax_get_provinces']);
         add_action('wp_ajax_ghn_get_districts', [$this, 'ajax_get_districts']);
@@ -41,90 +41,125 @@ class GHN_Checkout {
     }
 
     /* ------------------------------------------------------------------
-     *  Classic Checkout — Add fields
+     *  Classic Checkout — Add hidden fields for GHN meta
      * ----------------------------------------------------------------*/
 
-    /**
-     * Register GHN fields in WooCommerce checkout fields array.
-     * This ensures they are recognized during validation & processing.
-     */
     public function add_ghn_checkout_fields(array $fields): array {
+        /* Hidden inputs to carry GHN IDs (not visible, just data carriers) */
         $fields['shipping']['ghn_province_id'] = [
-            'type'     => 'select',
-            'label'    => 'Tỉnh / Thành phố',
-            'required' => true,
-            'class'    => ['form-row-first ghn-field'],
-            'priority' => 25,
-            'options'  => ['' => '— Chọn tỉnh/thành —'],
+            'type'     => 'hidden',
+            'label'    => false,
+            'required' => false,
+            'class'    => ['ghn-field-hidden'],
+            'priority' => 100,
         ];
-
         $fields['shipping']['ghn_district_id'] = [
-            'type'     => 'select',
-            'label'    => 'Quận / Huyện',
-            'required' => true,
-            'class'    => ['form-row-last ghn-field'],
-            'priority' => 26,
-            'options'  => ['' => '— Chọn quận/huyện —'],
+            'type'     => 'hidden',
+            'label'    => false,
+            'required' => false,
+            'class'    => ['ghn-field-hidden'],
+            'priority' => 101,
         ];
-
         $fields['shipping']['ghn_ward_code'] = [
-            'type'     => 'select',
-            'label'    => 'Phường / Xã',
-            'required' => true,
-            'class'    => ['form-row-wide ghn-field'],
-            'priority' => 27,
-            'options'  => ['' => '— Chọn phường/xã —'],
+            'type'     => 'hidden',
+            'label'    => false,
+            'required' => false,
+            'class'    => ['ghn-field-hidden'],
+            'priority' => 102,
         ];
-
         return $fields;
     }
 
-    /**
-     * Render the select dropdowns manually after the shipping form.
-     * WooCommerce doesn't render <select> from checkout_fields options automatically
-     * for custom fields, so we do it ourselves.
-     */
+    /* ------------------------------------------------------------------
+     *  Render the GHN Select Dropdowns
+     * ----------------------------------------------------------------*/
+
     public function render_ghn_selects(WC_Checkout $checkout): void {
-        // Check if GHN is configured
         $token   = get_option('ghn_token', '');
         $shop_id = get_option('ghn_shop_id', 0);
         if (empty($token) || !$shop_id) return;
 
-        echo '<div id="ghn-address-fields" class="ghn-checkout-wrapper" style="margin-top:20px;">';
-        echo '<h3 style="margin:0 0 12px; font-size:15px; font-weight:600;">📦 Khu vực giao hàng</h3>';
+        /* Get saved values for pre-selection */
+        $saved_province = $checkout->get_value('ghn_province_id');
+        $saved_district = $checkout->get_value('ghn_district_id');
+        $saved_ward     = $checkout->get_value('ghn_ward_code');
 
-        // Province
+        /* Also try to get from current user's last order if no session data */
+        if (!$saved_province && is_user_logged_in()) {
+            $last_order = $this->get_user_last_order();
+            if ($last_order) {
+                $saved_province = $saved_province ?: $last_order->get_meta('_ghn_province_id');
+                $saved_district = $saved_district ?: $last_order->get_meta('_ghn_district_id');
+                $saved_ward     = $saved_ward ?: $last_order->get_meta('_ghn_ward_code');
+            }
+        }
+
+        echo '<div id="ghn-address-fields" class="ghn-checkout-wrapper">';
+        echo '<h3>📦 Khu vực giao hàng</h3>';
+
+        /* Province select */
+        $province_options = ['' => '— Chọn tỉnh/thành —'];
         woocommerce_form_field('ghn_province_id', [
             'type'        => 'select',
-            'label'       => 'Tỉnh / Thành phố',
             'required'    => true,
             'class'       => ['form-row-first'],
             'input_class' => ['ghn-select'],
-            'options'     => ['' => '— Chọn tỉnh/thành —'],
-        ], $checkout->get_value('ghn_province_id'));
+            'input_id'    => 'ghn_province_id',
+            'options'     => $province_options,
+            'label'       => 'Tỉnh / Thành phố',
+        ], $saved_province);
 
-        // District
+        /* District select */
+        $district_options = ['' => '— Chọn quận/huyện —'];
         woocommerce_form_field('ghn_district_id', [
             'type'        => 'select',
-            'label'       => 'Quận / Huyện',
             'required'    => true,
             'class'       => ['form-row-last'],
             'input_class' => ['ghn-select'],
-            'options'     => ['' => '— Chọn quận/huyện —'],
-        ], $checkout->get_value('ghn_district_id'));
+            'input_id'    => 'ghn_district_id',
+            'options'     => $district_options,
+            'label'       => 'Quận / Huyện',
+        ], $saved_district);
 
-        // Ward
+        /* Ward select */
+        $ward_options = ['' => '— Chọn phường/xã —'];
         woocommerce_form_field('ghn_ward_code', [
             'type'        => 'select',
-            'label'       => 'Phường / Xã',
             'required'    => true,
             'class'       => ['form-row-wide'],
             'input_class' => ['ghn-select'],
-            'options'     => ['' => '— Chọn phường/xã —'],
-        ], $checkout->get_value('ghn_ward_code'));
+            'input_id'    => 'ghn_ward_code',
+            'options'     => $ward_options,
+            'label'       => 'Phường / Xã',
+        ], $saved_ward);
 
-        echo '<div id="ghn-address-status" style="margin-top:6px; font-size:12px; color:#666;"></div>';
+        echo '<div id="ghn-address-status" style="margin-top:8px; font-size:13px; color:#555; min-height:20px;"></div>';
         echo '</div>';
+    }
+
+    /* ------------------------------------------------------------------
+     *  Validate GHN Fields
+     * ----------------------------------------------------------------*/
+
+    public function validate_ghn_fields(): void {
+        /* Only validate if GHN is configured */
+        $token   = get_option('ghn_token', '');
+        $shop_id = get_option('ghn_shop_id', 0);
+        if (empty($token) || !$shop_id) return;
+
+        $province = sanitize_text_field($_POST['ghn_province_id'] ?? '');
+        $district = sanitize_text_field($_POST['ghn_district_id'] ?? '');
+        $ward     = sanitize_text_field($_POST['ghn_ward_code'] ?? '');
+
+        if (empty($province)) {
+            wc_add_notice('<strong>Tỉnh/Thành phố</strong>: Vui lòng chọn tỉnh/thành từ dropdown.', 'error');
+        }
+        if (empty($district)) {
+            wc_add_notice('<strong>Quận/Huyện</strong>: Vui lòng chọn quận/huyện từ dropdown.', 'error');
+        }
+        if (empty($ward)) {
+            wc_add_notice('<strong>Phường/Xã</strong>: Vui lòng chọn phường/xã từ dropdown.', 'error');
+        }
     }
 
     /* ------------------------------------------------------------------
@@ -133,15 +168,40 @@ class GHN_Checkout {
 
     /**
      * Save via checkout_create_order (runs before save, works with HPOS).
+     * Also syncs GHN names to WooCommerce standard shipping fields.
      */
     public function save_ghn_to_order(WC_Order $order, array $data): void {
-        $province = sanitize_text_field($_POST['ghn_province_id'] ?? '');
-        $district = sanitize_text_field($_POST['ghn_district_id'] ?? '');
-        $ward     = sanitize_text_field($_POST['ghn_ward_code'] ?? '');
+        $province_id = sanitize_text_field($_POST['ghn_province_id'] ?? '');
+        $district_id = sanitize_text_field($_POST['ghn_district_id'] ?? '');
+        $ward_code   = sanitize_text_field($_POST['ghn_ward_code'] ?? '');
 
-        if ($province) $order->update_meta_data('_ghn_province_id', $province);
-        if ($district) $order->update_meta_data('_ghn_district_id', $district);
-        if ($ward)     $order->update_meta_data('_ghn_ward_code', $ward);
+        /* Save GHN meta (IDs/codes) */
+        if ($province_id) $order->update_meta_data('_ghn_province_id', $province_id);
+        if ($district_id) $order->update_meta_data('_ghn_district_id', $district_id);
+        if ($ward_code)   $order->update_meta_data('_ghn_ward_code', $ward_code);
+
+        /* Save human-readable names for admin display */
+        $province_name = sanitize_text_field($_POST['ghn_province_name'] ?? '');
+        $district_name = sanitize_text_field($_POST['ghn_district_name'] ?? '');
+        $ward_name     = sanitize_text_field($_POST['ghn_ward_name'] ?? '');
+
+        if ($province_name) $order->update_meta_data('_ghn_province_name', $province_name);
+        if ($district_name) $order->update_meta_data('_ghn_district_name', $district_name);
+        if ($ward_name)     $order->update_meta_data('_ghn_ward_name', $ward_name);
+
+        /*
+         * Sync to WooCommerce standard shipping fields if they're empty.
+         * This ensures the address shows properly in admin & shipping plugins.
+         */
+        if ($province_name && !$order->get_shipping_state()) {
+            $order->set_shipping_state($province_name);
+        }
+        if ($district_name && !$order->get_shipping_city()) {
+            $order->set_shipping_city($district_name);
+        }
+        if ($ward_name && $district_name && !$order->get_shipping_address_1()) {
+            $order->set_shipping_address_1($ward_name . ', ' . $district_name);
+        }
     }
 
     /**
@@ -157,6 +217,15 @@ class GHN_Checkout {
         if (!empty($_POST['ghn_ward_code'])) {
             update_post_meta($order_id, '_ghn_ward_code', sanitize_text_field($_POST['ghn_ward_code']));
         }
+        if (!empty($_POST['ghn_province_name'])) {
+            update_post_meta($order_id, '_ghn_province_name', sanitize_text_field($_POST['ghn_province_name']));
+        }
+        if (!empty($_POST['ghn_district_name'])) {
+            update_post_meta($order_id, '_ghn_district_name', sanitize_text_field($_POST['ghn_district_name']));
+        }
+        if (!empty($_POST['ghn_ward_name'])) {
+            update_post_meta($order_id, '_ghn_ward_name', sanitize_text_field($_POST['ghn_ward_name']));
+        }
     }
 
     /* ------------------------------------------------------------------
@@ -164,17 +233,39 @@ class GHN_Checkout {
      * ----------------------------------------------------------------*/
 
     public function display_in_admin(WC_Order $order): void {
-        $province = $order->get_meta('_ghn_province_id');
-        $district = $order->get_meta('_ghn_district_id');
-        $ward     = $order->get_meta('_ghn_ward_code');
+        $province_id   = $order->get_meta('_ghn_province_id');
+        $district_id   = $order->get_meta('_ghn_district_id');
+        $ward_code     = $order->get_meta('_ghn_ward_code');
+        $province_name = $order->get_meta('_ghn_province_name');
+        $district_name = $order->get_meta('_ghn_district_name');
+        $ward_name     = $order->get_meta('_ghn_ward_name');
 
-        if (!$province && !$district && !$ward) return;
+        if (!$province_id && !$district_id && !$ward_code) return;
 
-        echo '<div style="margin-top:8px; padding:8px; background:#f0f6fc; border-left:3px solid #2271b1; font-size:12px;">';
-        echo '<strong>📦 GHN Area Codes:</strong><br>';
-        if ($province) echo 'Province: <code>' . esc_html($province) . '</code><br>';
-        if ($district) echo 'District: <code>' . esc_html($district) . '</code><br>';
-        if ($ward)     echo 'Ward: <code>' . esc_html($ward) . '</code>';
+        echo '<div style="margin-top:10px; padding:10px 12px; background:#f0f6fc; border-left:4px solid #2271b1; font-size:12px; line-height:1.6;">';
+        echo '<strong>📦 GHN Address Info:</strong><br>';
+
+        if ($province_name) {
+            echo 'Tỉnh/TP: <strong>' . esc_html($province_name) . '</strong>';
+            echo ' <code>' . esc_html($province_id) . '</code><br>';
+        } elseif ($province_id) {
+            echo 'Province ID: <code>' . esc_html($province_id) . '</code><br>';
+        }
+
+        if ($district_name) {
+            echo 'Quận/Huyện: <strong>' . esc_html($district_name) . '</strong>';
+            echo ' <code>' . esc_html($district_id) . '</code><br>';
+        } elseif ($district_id) {
+            echo 'District ID: <code>' . esc_html($district_id) . '</code><br>';
+        }
+
+        if ($ward_name) {
+            echo 'Phường/Xã: <strong>' . esc_html($ward_name) . '</strong>';
+            echo ' <code>' . esc_html($ward_code) . '</code>';
+        } elseif ($ward_code) {
+            echo 'Ward Code: <code>' . esc_html($ward_code) . '</code>';
+        }
+
         echo '</div>';
     }
 
@@ -185,27 +276,38 @@ class GHN_Checkout {
     public function register_block_checkout_hooks(): void {
         if (!class_exists('Automattic\WooCommerce\Blocks\Package')) return;
 
-        $store_api = function_exists('woocommerce_store_api_register_endpoint_data')
-            ? 'woocommerce_store_api_register_endpoint_data'
-            : null;
+        add_action('woocommerce_store_api_checkout_update_order_from_request', function ($order, $request) {
+            $province = $request->get_meta('ghn_province_id') ?? '';
+            $district = $request->get_meta('ghn_district_id') ?? '';
+            $ward     = $request->get_meta('ghn_ward_code') ?? '';
 
-        if ($store_api) {
-            // Register data in Store API
-            add_action('woocommerce_store_api_checkout_update_order_from_request', function ($order, $request) {
-                $province = $request->get_meta('ghn_province_id') ?? '';
-                $district = $request->get_meta('ghn_district_id') ?? '';
-                $ward     = $request->get_meta('ghn_ward_code') ?? '';
+            if ($province) $order->update_meta_data('_ghn_province_id', sanitize_text_field($province));
+            if ($district) $order->update_meta_data('_ghn_district_id', sanitize_text_field($district));
+            if ($ward)     $order->update_meta_data('_ghn_ward_code', sanitize_text_field($ward));
 
-                if ($province) $order->update_meta_data('_ghn_province_id', sanitize_text_field($province));
-                if ($district) $order->update_meta_data('_ghn_district_id', sanitize_text_field($district));
-                if ($ward)     $order->update_meta_data('_ghn_ward_code', sanitize_text_field($ward));
-            }, 10, 2);
-        }
+            /* Also save names */
+            $province_name = $request->get_meta('ghn_province_name') ?? '';
+            $district_name = $request->get_meta('ghn_district_name') ?? '';
+            $ward_name     = $request->get_meta('ghn_ward_name') ?? '';
 
-        // Also render via woocommerce_after_shipping_address as block fallback
+            if ($province_name) $order->update_meta_data('_ghn_province_name', sanitize_text_field($province_name));
+            if ($district_name) $order->update_meta_data('_ghn_district_name', sanitize_text_field($district_name));
+            if ($ward_name)     $order->update_meta_data('_ghn_ward_name', sanitize_text_field($ward_name));
+
+            /* Sync to standard fields */
+            if ($province_name && !$order->get_shipping_state()) {
+                $order->set_shipping_state($province_name);
+            }
+            if ($district_name && !$order->get_shipping_city()) {
+                $order->set_shipping_city($district_name);
+            }
+            if ($ward_name && $district_name && !$order->get_shipping_address_1()) {
+                $order->set_shipping_address_1($ward_name . ', ' . $district_name);
+            }
+        }, 10, 2);
+
         add_action('woocommerce_after_shipping_address', function () {
             if (!is_checkout()) return;
-            // Only render if our select fields weren't already rendered (block checkout)
             if (did_action('woocommerce_after_checkout_shipping_form')) return;
             $this->render_ghn_selects(WC()->checkout());
         });
@@ -307,5 +409,27 @@ class GHN_Checkout {
             'ajaxUrl' => admin_url('admin-ajax.php'),
             'nonce'   => wp_create_nonce('ghn_checkout_nonce'),
         ]);
+    }
+
+    /* ------------------------------------------------------------------
+     *  Helpers
+     * ----------------------------------------------------------------*/
+
+    /**
+     * Get the last completed order for the current user (for pre-filling).
+     */
+    private function get_user_last_order(): ?WC_Order {
+        $customer_id = get_current_user_id();
+        if (!$customer_id) return null;
+
+        $orders = wc_get_orders([
+            'customer_id' => $customer_id,
+            'limit'       => 1,
+            'orderby'     => 'date',
+            'order'       => 'DESC',
+            'status'      => ['wc-completed', 'wc-processing'],
+        ]);
+
+        return $orders ? $orders[0] : null;
     }
 }
