@@ -1,0 +1,141 @@
+/* GHN Admin Styles - Lightweight */
+
+/* Order list columns */
+.column-ghn_status {
+    width: 130px;
+    text-align: center;
+}
+.column-ghn_actions {
+    width: 200px;
+    text-align: center;
+}
+
+/* Status cell */
+.ghn-status-cell {
+    line-height: 1.6;
+}
+.ghn-status-cell code {
+    font-size: 11px;
+    background: #f0f0f1;
+    padding: 2px 5px;
+    border-radius: 3px;
+}
+
+/* Action buttons */
+.ghn-actions-cell {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+.ghn-btn-create,
+.ghn-btn-track {
+    font-size: 12px !important;
+    line-height: 1.5 !important;
+    padding: 2px 8px !important;
+    height: auto !important;
+    white-space: nowrap;
+}
+.ghn-btn-create {
+    background: #0073aa !important;
+    border-color: #0073aa !important;
+    color: #fff !important;
+}
+.ghn-btn-create:hover {
+    background: #005a87 !important;
+}
+.ghn-btn-track {
+    background: #607d8b !important;
+    border-color: #607d8b !important;
+    color: #fff !important;
+}
+.ghn-btn-track:hover {
+    background: #455a64 !important;
+}
+
+/* Loading state */
+.ghn-loading {
+    opacity: 0.6;
+    pointer-events: none;
+}
+.ghn-loading::after {
+    content: ' ⏳';
+}
+
+/* Tracking meta box */
+.ghn-tracking-box p {
+    margin: 0 0 8px;
+    font-size: 13px;
+}
+.ghn-tracking-box code {
+    font-size: 13px;
+    font-weight: bold;
+    background: #f0f0f1;
+    padding: 3px 8px;
+    border-radius: 4px;
+    user-select: all;
+}
+.ghn-tracking-log {
+    max-height: 200px;
+    overflow-y: auto;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    padding: 6px;
+    background: #fafafa;
+    margin-bottom: 8px;
+}
+.ghn-tracking-log ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+.ghn-tracking-log li {
+    padding: 3px 0;
+    border-bottom: 1px dotted #eee;
+    font-size: 12px;
+}
+.ghn-tracking-log li:last-child {
+    border-bottom: none;
+}
+
+/* Tracking result popup (inline) */
+.ghn-track-result {
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 12px;
+    margin-top: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    font-size: 13px;
+}
+.ghn-track-result h4 {
+    margin: 0 0 8px;
+    font-size: 14px;
+}
+.ghn-track-result .ghn-track-steps {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+.ghn-track-result .ghn-track-steps li {
+    padding: 4px 0 4px 24px;
+    position: relative;
+    border-left: 2px solid #e0e0e0;
+    margin-left: 8px;
+}
+.ghn-track-result .ghn-track-steps li:last-child {
+    border-left-color: transparent;
+}
+.ghn-track-result .ghn-track-steps li::before {
+    content: '●';
+    position: absolute;
+    left: -6px;
+    top: 5px;
+    color: #0073aa;
+    font-size: 10px;
+}
+.ghn-track-result .ghn-track-steps li:first-child::before {
+    color: #4caf50;
+    font-size: 14px;
+}
