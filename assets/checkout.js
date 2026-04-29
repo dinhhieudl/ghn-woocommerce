@@ -1,37 +1,47 @@
 /**
  * GHN Checkout JS - Cascading Province → District → Ward dropdowns
+ * Works with both classic and block-based WooCommerce checkout.
  */
 (function ($) {
     'use strict';
 
     var $province, $district, $ward, $status;
     var cache = { provinces: null, districts: {}, wards: {} };
+    var initialized = false;
 
     function init() {
-        $province = $('#ghn_province_id');
-        $district = $('#ghn_district_id');
-        $ward     = $('#ghn_ward_code');
+        // Find our select fields (classic checkout)
+        $province = $('select[name="ghn_province_id"], #ghn_province_id');
+        $district = $('select[name="ghn_district_id"], #ghn_district_id');
+        $ward     = $('select[name="ghn_ward_code"], #ghn_ward_code');
         $status   = $('#ghn-address-status');
 
-        if (!$province.length) return;
+        if (!$province.length || initialized) return;
+        initialized = true;
 
-        // Hide district/ward until province selected
+        // Initially hide district & ward until province selected
         $district.closest('.form-row').hide();
         $ward.closest('.form-row').hide();
 
-        // Load provinces on page load
+        // Load provinces immediately
         loadProvinces();
 
-        // Cascade events
+        // Bind cascade events
         $province.on('change', onProvinceChange);
         $district.on('change', onDistrictChange);
+
+        // Also try to pre-fill from WooCommerce saved checkout data
+        var savedProvince = $province.val();
+        if (savedProvince) {
+            $province.trigger('change');
+        }
     }
 
     /* ------------------------------------------------------------------
      *  Load Provinces
      * ----------------------------------------------------------------*/
     function loadProvinces() {
-        $status.text('Đang tải danh sách tỉnh/thành...');
+        $status.text('Đang tải tỉnh/thành...');
 
         if (cache.provinces) {
             renderProvinces(cache.provinces);
@@ -40,26 +50,28 @@
 
         $.get(ghnCheckout.ajaxUrl, {
             action: 'ghn_get_provinces',
-            nonce: ghnCheckout.nonce,
+            nonce:  ghnCheckout.nonce,
         }).done(function (resp) {
-            if (resp.success) {
+            if (resp.success && resp.data) {
                 cache.provinces = resp.data;
                 renderProvinces(resp.data);
             } else {
-                $status.html('⚠️ ' + (resp.data || 'Lỗi tải tỉnh/thành'));
+                $status.html('⚠️ Không tải được danh sách tỉnh/thành');
             }
         }).fail(function () {
-            $status.html('⚠️ Lỗi kết nối API GHN');
+            $status.html('⚠️ Lỗi kết nối. Thử lại trang.');
         });
     }
 
     function renderProvinces(list) {
         $province.find('option:gt(0)').remove();
-        list.forEach(function (p) {
-            $province.append('<option value="' + p.id + '">' + escapeHtml(p.name) + '</option>');
+        $.each(list, function (_, p) {
+            $province.append(
+                $('<option>', { value: p.id, text: p.name })
+            );
         });
         $status.text('');
-        $province.closest('.form-row').show();
+        $province.closest('.form-row').slideDown(200);
     }
 
     /* ------------------------------------------------------------------
@@ -84,15 +96,15 @@
         }
 
         $.get(ghnCheckout.ajaxUrl, {
-            action: 'ghn_get_districts',
-            nonce: ghnCheckout.nonce,
-            province_id: pid,
+            action:       'ghn_get_districts',
+            nonce:        ghnCheckout.nonce,
+            province_id:  pid,
         }).done(function (resp) {
-            if (resp.success) {
+            if (resp.success && resp.data) {
                 cache.districts[pid] = resp.data;
                 renderDistricts(resp.data);
             } else {
-                $status.html('⚠️ ' + (resp.data || 'Lỗi tải quận/huyện'));
+                $status.html('⚠️ Không tải được quận/huyện');
             }
         }).fail(function () {
             $status.html('⚠️ Lỗi kết nối');
@@ -101,13 +113,15 @@
 
     function renderDistricts(list) {
         $district.find('option:gt(0)').remove();
-        list.forEach(function (d) {
+        $.each(list, function (_, d) {
             var label = d.name;
             if (d.supportType === 0) label += ' (không hỗ trợ)';
-            $district.append('<option value="' + d.id + '"' + (d.supportType === 0 ? ' disabled' : '') + '>' + escapeHtml(label) + '</option>');
+            var $opt = $('<option>', { value: d.id, text: label });
+            if (d.supportType === 0) $opt.prop('disabled', true);
+            $district.append($opt);
         });
         $status.text('');
-        $district.closest('.form-row').show();
+        $district.closest('.form-row').slideDown(200);
     }
 
     /* ------------------------------------------------------------------
@@ -129,15 +143,15 @@
         }
 
         $.get(ghnCheckout.ajaxUrl, {
-            action: 'ghn_get_wards',
-            nonce: ghnCheckout.nonce,
+            action:      'ghn_get_wards',
+            nonce:       ghnCheckout.nonce,
             district_id: did,
         }).done(function (resp) {
-            if (resp.success) {
+            if (resp.success && resp.data) {
                 cache.wards[did] = resp.data;
                 renderWards(resp.data);
             } else {
-                $status.html('⚠️ ' + (resp.data || 'Lỗi tải phường/xã'));
+                $status.html('⚠️ Không tải được phường/xã');
             }
         }).fail(function () {
             $status.html('⚠️ Lỗi kết nối');
@@ -146,21 +160,30 @@
 
     function renderWards(list) {
         $ward.find('option:gt(0)').remove();
-        list.forEach(function (w) {
-            $ward.append('<option value="' + escapeHtml(w.code) + '">' + escapeHtml(w.name) + '</option>');
+        $.each(list, function (_, w) {
+            $ward.append(
+                $('<option>', { value: w.code, text: w.name })
+            );
         });
         $status.text('');
-        $ward.closest('.form-row').show();
+        $ward.closest('.form-row').slideDown(200);
     }
 
     /* ------------------------------------------------------------------
-     *  Helpers
+     *  Init — wait for DOM ready, also handle block checkout re-renders
      * ----------------------------------------------------------------*/
-    function escapeHtml(str) {
-        var div = document.createElement('div');
-        div.appendChild(document.createTextNode(str));
-        return div.innerHTML;
-    }
+    $(document).ready(function () {
+        init();
 
-    $(document).ready(init);
+        // Block checkout may re-render the form — observe DOM for our fields
+        if (typeof MutationObserver !== 'undefined') {
+            var observer = new MutationObserver(function () {
+                if (!initialized && $('select[name="ghn_province_id"]').length) {
+                    init();
+                }
+            });
+            observer.observe(document.body, { childList: true, subtree: true });
+        }
+    });
+
 })(jQuery);
